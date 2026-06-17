@@ -1,0 +1,21 @@
+# Python / Backend
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+backend/env/
+backend/.env
+backend/sessions.json
+backend/documents.json
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Old Frontend backup (Optional: you can remove this if you want to push it)
+# frontend_old/
+
+# System Files
+.DS_Store
+Thumbs.db
