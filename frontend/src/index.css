@@ -627,6 +627,28 @@ textarea { font-family: inherit; resize: none; }
   color: var(--accent);
   font-weight: 600;
 }
+.message--ai .message-bubble pre {
+  background: var(--bg-root);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  margin: 12px 0;
+}
+.message--ai .message-bubble code {
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 12.5px;
+  background: var(--bg-root);
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+.message--ai .message-bubble pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: var(--text-secondary);
+}
 
 /* Sources */
 .message-sources {
