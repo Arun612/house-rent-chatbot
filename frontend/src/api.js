@@ -53,12 +53,44 @@ export const deleteSession = async (sessionId) => {
   return res.json();
 };
 
-export const chatWithAgent = async (sessionId, question) => {
+export const chatWithAgent = async (sessionId, question, onChunk, onSources) => {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, question }),
   });
   if (!res.ok) throw new Error("Failed to chat");
-  return res.json();
+  
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep the last partial line in the buffer
+    
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const dataStr = line.slice(6);
+        if (dataStr) {
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (parsed.chunk && onChunk) {
+              onChunk(parsed.chunk);
+            }
+            if (parsed.sources && onSources) {
+              onSources(parsed.sources);
+            }
+          } catch (err) {
+            console.error("Error parsing stream data:", err);
+          }
+        }
+      }
+    }
+  }
 };

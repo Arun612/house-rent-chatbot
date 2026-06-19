@@ -1,95 +1,80 @@
-# session_store.py
-"""
-In-memory session store with JSON persistence.
-Sessions survive server restarts via sessions.json.
-"""
 import uuid
-import json
-import os
 from datetime import datetime
-
-_SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "sessions.json")
-_sessions: dict[str, dict] = {}
-
-
-# ── Persistence helpers ────────────────────────────────────────────────────────
-
-def _load() -> None:
-    global _sessions
-    if os.path.exists(_SESSIONS_FILE):
-        try:
-            with open(_SESSIONS_FILE, "r", encoding="utf-8") as f:
-                _sessions = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            _sessions = {}
-
-
-def _save() -> None:
-    try:
-        with open(_SESSIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(_sessions, f, indent=2, ensure_ascii=False)
-    except IOError:
-        pass
-
-
-_load()  # Load on import
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
+from database import SessionLocal, ChatSession, ChatMessage
 
 def create_session(doc_id: str, filename: str) -> str:
     """Create a new chat session and return its session_id."""
     session_id = f"sess_{uuid.uuid4().hex[:8]}"
-    _sessions[session_id] = {
-        "doc_id": doc_id,
-        "filename": filename,
-        "created_at": datetime.now().isoformat(),
-        "messages": [],          # [{"role": "human"|"ai", "content": str, "timestamp": str}]
-    }
-    _save()
+    with SessionLocal() as db:
+        new_session = ChatSession(
+            session_id=session_id,
+            doc_id=doc_id,
+            filename=filename
+        )
+        db.add(new_session)
+        db.commit()
     return session_id
 
-
 def get_session(session_id: str) -> dict | None:
-    return _sessions.get(session_id)
-
+    with SessionLocal() as db:
+        sess = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        if not sess:
+            return None
+        return {
+            "session_id": sess.session_id,
+            "doc_id": sess.doc_id,
+            "filename": sess.filename,
+            "created_at": sess.created_at.isoformat() if sess.created_at else None,
+            "messages": get_history(session_id)
+        }
 
 def add_message(session_id: str, role: str, content: str) -> None:
     """Append a message to the session history."""
-    if session_id not in _sessions:
-        return
-    _sessions[session_id]["messages"].append({
-        "role": role,
-        "content": content,
-        "timestamp": datetime.now().isoformat(),
-    })
-    _save()
-
+    with SessionLocal() as db:
+        new_msg = ChatMessage(
+            session_id=session_id,
+            role=role,
+            content=content
+        )
+        db.add(new_msg)
+        db.commit()
 
 def get_history(session_id: str) -> list[dict]:
-    return _sessions.get(session_id, {}).get("messages", [])
-
+    with SessionLocal() as db:
+        messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+        return [
+            {
+                "role": m.role,
+                "content": m.content,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None
+            }
+            for m in messages
+        ]
 
 def delete_session(session_id: str) -> None:
-    _sessions.pop(session_id, None)
-    _save()
-
+    with SessionLocal() as db:
+        sess = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        if sess:
+            db.delete(sess)
+            db.commit()
 
 def delete_all_sessions() -> None:
-    """Clear all sessions from memory and disk."""
-    global _sessions
-    _sessions = {}
-    _save()
-
+    """Clear all sessions from the database."""
+    with SessionLocal() as db:
+        db.query(ChatSession).delete()
+        db.commit()
 
 def list_sessions() -> list[dict]:
-    return [
-        {
-            "session_id": sid,
-            "doc_id": data["doc_id"],
-            "filename": data["filename"],
-            "created_at": data["created_at"],
-            "message_count": len(data["messages"]),
-        }
-        for sid, data in _sessions.items()
-    ]
+    with SessionLocal() as db:
+        sessions = db.query(ChatSession).order_by(ChatSession.created_at.desc()).all()
+        result = []
+        for sess in sessions:
+            msg_count = db.query(ChatMessage).filter(ChatMessage.session_id == sess.session_id).count()
+            result.append({
+                "session_id": sess.session_id,
+                "doc_id": sess.doc_id,
+                "filename": sess.filename,
+                "created_at": sess.created_at.isoformat() if sess.created_at else None,
+                "message_count": msg_count,
+            })
+        return result

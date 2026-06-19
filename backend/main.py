@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
@@ -19,7 +19,9 @@ from session_store import (
     list_sessions,
     delete_all_sessions,
 )
-from rag_chain import ask
+from rag_chain import ask, ask_stream
+from metadata_extractor import extract_metadata
+from database import Base, engine, SessionLocal, Document
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -40,50 +42,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Document Registry (persisted to disk so it survives restarts) ─────────────
-_DOCS_FILE = os.path.join(os.path.dirname(__file__), "documents.json")
-_documents: dict[str, dict] = {}
-
-def _load_documents():
-    global _documents
-    if os.path.exists(_DOCS_FILE):
-        try:
-            with open(_DOCS_FILE, "r", encoding="utf-8") as f:
-                _documents = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            _documents = {}
-
-def _save_documents():
-    try:
-        with open(_DOCS_FILE, "w", encoding="utf-8") as f:
-            json.dump(_documents, f, indent=2, ensure_ascii=False)
-    except IOError:
-        pass
-
-# Load documents on import
-_load_documents()
-
 _splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
-
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
-    """Init Pinecone index in a background thread — never blocks the event loop."""
+    """Init DB tables and Pinecone index in a background thread."""
+    Base.metadata.create_all(bind=engine)
     import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, get_index)
 
 
-
 # ── Request models ────────────────────────────────────────────────────────────
 class SessionRequest(BaseModel):
     doc_id: str
-
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -99,26 +76,14 @@ def health():
 # ── Upload ────────────────────────────────────────────────────────────────────
 @app.post("/upload", tags=["Documents"])
 async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Upload a PDF, parse it with PyMuPDF, chunk it, embed via sentence-transformers,
-    and upsert all vectors to Pinecone.
-
-    If the same filename was already uploaded, returns the existing document
-    instead of creating a duplicate — preventing double-indexing in Pinecone.
-    """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     # ── Duplicate guard ───────────────────────────────────────────────────────
-    # If a document with this exact filename is already indexed, return it.
-    # This is safer than MD5 hash, because sometimes the same PDF has slightly
-    # different metadata bytes if downloaded twice.
-    existing = next(
-        (doc for doc in _documents.values() if doc["filename"] == file.filename),
-        None,
-    )
-    if existing:
-        return {**existing, "already_existed": True}
+    with SessionLocal() as db:
+        existing = db.query(Document).filter(Document.filename == file.filename).first()
+        if existing:
+            return {**existing.to_dict(), "already_existed": True}
 
     contents = await file.read()
     parsed = parse_pdf(contents, file.filename)
@@ -129,7 +94,6 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail="No readable text found in this PDF. It may be scanned/image-based.",
         )
 
-    # Chunk every page
     chunks: list[dict] = []
     for page in parsed["pages"]:
         for text in _splitter.split_text(page["text"]):
@@ -139,94 +103,87 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not chunks:
         raise HTTPException(status_code=422, detail="Could not extract any usable text chunks.")
 
+    # ── Extract Metadata ──────────────────────────────────────────────────────
+    full_text = "\n".join(page["text"] for page in parsed["pages"])
+    metadata = extract_metadata(full_text)
+
     chunk_count = upsert_chunks(chunks, parsed["doc_id"], file.filename)
 
-    doc_info = {
-        "doc_id": parsed["doc_id"],
-
-        "filename": file.filename,
-        "page_count": parsed["page_count"],
-        "chunk_count": chunk_count,
-    }
-    _documents[parsed["doc_id"]] = doc_info
-    _save_documents()          # ← persist so it survives restarts
-    return doc_info
+    with SessionLocal() as db:
+        new_doc = Document(
+            doc_id=parsed["doc_id"],
+            filename=file.filename,
+            page_count=parsed["page_count"],
+            chunk_count=chunk_count,
+            metadata_json=json.dumps(metadata)
+        )
+        db.add(new_doc)
+        db.commit()
+        db.refresh(new_doc)
+        return new_doc.to_dict()
 
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 @app.get("/documents", tags=["Documents"])
 def list_documents():
-    return list(_documents.values())
+    with SessionLocal() as db:
+        docs = db.query(Document).order_by(Document.created_at.desc()).all()
+        return [doc.to_dict() for doc in docs]
 
 
 @app.delete("/documents/{doc_id}", tags=["Documents"])
 def remove_document(doc_id: str):
-    if doc_id not in _documents:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    delete_doc_vectors(doc_id)
-    del _documents[doc_id]
-    _save_documents()          # ← persist deletion
-
-    # Cascading delete: Remove all chat sessions tied to this document
-    sessions = list_sessions()
-    for s in sessions:
-        if s["doc_id"] == doc_id:
-            delete_session(s["session_id"])
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.doc_id == doc_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        
+        # Pinecone delete
+        delete_doc_vectors(doc_id)
+        
+        # Cascading deletes will handle sessions and messages
+        db.delete(doc)
+        db.commit()
 
     return {"message": "Document and all its vectors deleted successfully."}
 
 
 @app.delete("/purge/{doc_id}", tags=["Documents"])
 def force_purge_doc_id(doc_id: str):
-    """
-    Force-delete ALL Pinecone vectors for a doc_id even if it's not in documents.json.
-    Use this to clean up orphan/legacy doc_ids that were created before persistence was added.
-    """
     delete_doc_vectors(doc_id)
-    # Also remove from registry if it happens to be there
-    if doc_id in _documents:
-        del _documents[doc_id]
-        _save_documents()
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.doc_id == doc_id).first()
+        if doc:
+            db.delete(doc)
+            db.commit()
     return {"message": f"Purged all Pinecone vectors for doc_id='{doc_id}'."}
 
 
 @app.delete("/reset", tags=["System"])
 def factory_reset():
-    """
-    DANGER: Wipes EVERYTHING.
-    Deletes all vectors in Pinecone, clears documents.json, and clears sessions.json.
-    """
-    global _documents
-    
-    # 1. Hard wipe ALL vectors from Pinecone
     delete_all_vectors()
-    
-    # 2. Clear documents registry
-    _documents.clear()
-    _save_documents()
-    
-    # 3. Clear all chat sessions
-    delete_all_sessions()
-    
+    with SessionLocal() as db:
+        db.query(Document).delete()
+        db.commit()
     return {"message": "Factory reset complete. All documents, vectors, and chat histories have been deleted."}
 
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 @app.post("/sessions", tags=["Sessions"])
 def new_session(req: SessionRequest):
-    """Create a new conversation session scoped to an uploaded document."""
-    if req.doc_id not in _documents:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found. Please upload it first.",
-        )
-    doc = _documents[req.doc_id]
-    session_id = create_session(req.doc_id, doc["filename"])
-    return {
-        "session_id": session_id,
-        "doc_id": req.doc_id,
-        "filename": doc["filename"],
-    }
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.doc_id == req.doc_id).first()
+        if not doc:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found. Please upload it first.",
+            )
+        session_id = create_session(req.doc_id, doc.filename)
+        return {
+            "session_id": session_id,
+            "doc_id": req.doc_id,
+            "filename": doc.filename,
+        }
 
 
 @app.get("/sessions", tags=["Sessions"])
@@ -239,17 +196,11 @@ def session_history(session_id: str):
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-    return {
-        "session_id": session_id,
-        "doc_id": session["doc_id"],
-        "filename": session["filename"],
-        "created_at": session["created_at"],
-        "messages": session["messages"],
-    }
+    return session
 
 
 @app.delete("/sessions/{session_id}", tags=["Sessions"])
-def remove_session(session_id: str):
+def remove_session_route(session_id: str):
     if not get_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
     delete_session(session_id)
@@ -260,57 +211,51 @@ def remove_session(session_id: str):
 @app.post("/chat", tags=["Chat"])
 async def chat(req: ChatRequest):
     """
-    Send a question to the RAG chain.
-    The session's full conversation history is injected into the chain so
-    follow-up questions (e.g. "What about the deposit?") work correctly.
+    Send a question to the RAG chain and stream the response.
     """
     session = get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
 
-    if session["doc_id"] not in _documents:
-        raise HTTPException(
-            status_code=400, 
-            detail="The document for this conversation has been deleted. Please upload it again to start a new chat."
-        )
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.doc_id == session["doc_id"]).first()
+        if not doc:
+            raise HTTPException(
+                status_code=400, 
+                detail="The document for this conversation has been deleted. Please upload it again to start a new chat."
+            )
 
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     history = get_history(req.session_id)
-
-    result = ask(
-        question=req.question.strip(),
-        doc_id=session["doc_id"],
-        history_messages=history,
-    )
-
-    # Persist both turns to the session
     add_message(req.session_id, "human", req.question.strip())
-    add_message(req.session_id, "ai", result["answer"])
 
-    formatted_sources = [
-        {
-            "content": doc.get("snippet", ""),
-            "page": doc.get("page", "?"),
-        }
-        for doc in result["sources"]
-    ]
+    async def generate():
+        async for item in ask_stream(
+            question=req.question.strip(),
+            doc_id=session["doc_id"],
+            history_messages=history,
+        ):
+            if "full_answer" in item:
+                add_message(req.session_id, "ai", item["full_answer"])
+                formatted_sources = [
+                    {
+                        "content": doc.get("snippet", ""),
+                        "page": doc.get("page", "?"),
+                    }
+                    for doc in item["sources"]
+                ]
+                yield f"data: {json.dumps({'sources': formatted_sources})}\n\n"
+            else:
+                yield f"data: {json.dumps({'chunk': item['chunk']})}\n\n"
 
-    return {
-        "answer": result["answer"],
-        "sources": formatted_sources,
-        "session_id": req.session_id,
-        "turn": (len(history) // 2) + 1,
-    }
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ── Frontend (serve static files) ─────────────────────────────────────────────
-# Root → serve index.html
 @app.get("/", include_in_schema=False)
 def serve_frontend():
     return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
 
-# Mount all other frontend assets (style.css, app.js, etc.)
-# Must come LAST so API routes take priority
 app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")

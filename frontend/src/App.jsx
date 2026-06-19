@@ -49,6 +49,7 @@ export default function App() {
       />
       <ChatArea 
         session={activeSessionData}
+        documents={documents}
         showToast={showToast}
       />
       <ToastContainer toasts={toasts} />
