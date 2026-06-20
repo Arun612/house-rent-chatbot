@@ -10,6 +10,7 @@ export default function App() {
   const [sessions, setSessions] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
   const [toasts, setToasts] = useState([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     refreshData();
@@ -37,20 +38,36 @@ export default function App() {
 
   const activeSessionData = sessions.find(s => s.session_id === activeSession) || null;
 
+  const handleSetActiveSession = (sessionId) => {
+    setActiveSession(sessionId);
+    setSidebarOpen(false); // auto-close sidebar on mobile when session is selected
+  };
+
   return (
     <div className="app-shell">
+      {/* Mobile overlay backdrop */}
+      {sidebarOpen && (
+        <div 
+          className="sidebar-backdrop" 
+          onClick={() => setSidebarOpen(false)} 
+        />
+      )}
+
       <Sidebar 
         documents={documents}
         sessions={sessions}
         activeSession={activeSession}
-        setActiveSession={setActiveSession}
+        setActiveSession={handleSetActiveSession}
         refreshData={refreshData}
         showToast={showToast}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
       <ChatArea 
         session={activeSessionData}
         documents={documents}
         showToast={showToast}
+        onOpenSidebar={() => setSidebarOpen(true)}
       />
       <ToastContainer toasts={toasts} />
     </div>

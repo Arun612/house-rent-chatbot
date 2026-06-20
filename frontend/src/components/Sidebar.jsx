@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, FileText, MessageSquare, Trash2, Home, Box } from 'lucide-react';
+import { UploadCloud, FileText, MessageSquare, Trash2, Home, Box, X } from 'lucide-react';
 import { uploadDocument, deleteDocument, createSession, deleteSession } from '../api';
 
 export default function Sidebar({
@@ -8,7 +8,9 @@ export default function Sidebar({
   activeSession,
   setActiveSession,
   refreshData,
-  showToast
+  showToast,
+  isOpen,
+  onClose
 }) {
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -93,11 +95,14 @@ export default function Sidebar({
   };
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isOpen ? 'sidebar--open' : ''}`}>
       {/* Logo */}
       <div className="sidebar-logo">
         <div className="logo-icon"><Home size={20} /></div>
         <div className="logo-text">RentChat</div>
+        <button className="sidebar-close-btn" onClick={onClose} aria-label="Close sidebar">
+          <X size={18} />
+        </button>
       </div>
 
       {/* Upload Zone */}

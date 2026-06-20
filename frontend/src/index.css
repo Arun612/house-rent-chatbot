@@ -800,6 +800,34 @@ textarea { font-family: inherit; resize: none; }
   cursor: not-allowed;
   box-shadow: none;
 }
+
+.mic-btn {
+  width: 38px; height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-xs);
+}
+.mic-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+}
+.mic-btn.listening {
+  color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.4);
+  background: var(--danger-soft);
+  animation: pulseMic 1.5s infinite;
+}
+@keyframes pulseMic {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
 .input-hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -878,6 +906,285 @@ textarea { font-family: inherit; resize: none; }
    UTILITIES
    ══════════════════════════════════════════════════════════════════════════ */
 .hidden { display: none !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MOBILE MENU BUTTON (hamburger)
+   ══════════════════════════════════════════════════════════════════════════ */
+.mobile-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-xs);
+}
+.mobile-menu-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Sidebar close button (only visible on mobile) */
+.sidebar-close-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  margin-left: auto;
+  transition: all var(--transition);
+}
+.sidebar-close-btn:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* Backdrop overlay for mobile sidebar */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 99;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — TABLET (≤ 900px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  :root {
+    --sidebar-w: 280px;
+  }
+
+  .messages-wrapper {
+    padding: 20px 16px;
+  }
+
+  .messages-list {
+    max-width: 100%;
+  }
+
+  .input-wrapper {
+    max-width: 100%;
+  }
+
+  .input-bar {
+    padding: 12px 16px 16px;
+  }
+
+  .input-hint {
+    max-width: 100%;
+  }
+
+  .chat-header {
+    padding: 12px 16px;
+  }
+
+  .chat-doc-name {
+    max-width: 260px;
+  }
+
+  .welcome-tips {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — MOBILE (≤ 768px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Show mobile UI elements */
+  .mobile-menu-btn {
+    display: flex;
+  }
+  .sidebar-close-btn {
+    display: flex;
+  }
+  .sidebar-backdrop {
+    display: block;
+  }
+
+  /* Sidebar becomes a fixed drawer */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-md);
+    width: var(--sidebar-w) !important;
+    min-width: var(--sidebar-w) !important;
+  }
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  /* Chat area takes full width */
+  .chat-area {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Chat header adjustments */
+  .chat-header {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .chat-doc-name {
+    font-size: 13px;
+    max-width: 180px;
+  }
+  .chat-session-label {
+    display: none;
+  }
+
+  /* Message bubbles full-width on mobile */
+  .message-bubble {
+    max-width: 88%;
+    font-size: 13.5px;
+  }
+  .message-sources {
+    max-width: 88%;
+  }
+
+  /* Input bar */
+  .messages-wrapper {
+    padding: 16px 12px;
+  }
+  .input-bar {
+    padding: 10px 12px 14px;
+  }
+  .input-wrapper {
+    padding: 8px 8px 8px 14px;
+    border-radius: var(--radius-md);
+  }
+
+  /* Welcome state */
+  .welcome-state {
+    max-width: 100%;
+    padding: 0 8px;
+  }
+  .welcome-state h2 {
+    font-size: 20px;
+  }
+  .welcome-state p {
+    font-size: 13px;
+  }
+  .welcome-icon {
+    width: 66px;
+    height: 66px;
+    border-radius: 20px;
+    margin-bottom: 16px;
+  }
+  .welcome-tips {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .tip {
+    font-size: 12px;
+    padding: 9px 11px;
+  }
+
+  /* Quick actions */
+  .quick-actions {
+    gap: 6px;
+  }
+  .quick-action-btn {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  /* Toast container */
+  #toast-container {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+  }
+  .toast {
+    max-width: 100%;
+  }
+
+  /* Summary card */
+  .summary-card {
+    margin: 14px auto;
+  }
+  .summary-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — SMALL MOBILE (≤ 480px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+  :root {
+    --sidebar-w: 85vw;
+  }
+
+  .chat-header {
+    padding: 8px 12px;
+  }
+  .chat-doc-icon {
+    width: 30px;
+    height: 30px;
+  }
+  .chat-doc-name {
+    font-size: 12.5px;
+    max-width: 160px;
+  }
+
+  .btn-ghost {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .message-bubble {
+    max-width: 92%;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .message-sources {
+    max-width: 92%;
+  }
+
+  .messages-wrapper {
+    padding: 12px 10px;
+  }
+
+  .input-wrapper {
+    padding: 7px 7px 7px 12px;
+  }
+  .question-input {
+    font-size: 13.5px;
+  }
+  .send-btn {
+    width: 34px;
+    height: 34px;
+  }
+  .input-hint {
+    font-size: 10px;
+  }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    DOCUMENT SUMMARY CARD

@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, FileText, Zap } from 'lucide-react';
+import { Send, FileText, Zap, Menu, Mic } from 'lucide-react';
 import Message from './Message';
 import DocumentSummaryCard from './DocumentSummaryCard';
 import { getHistory, chatWithAgent } from '../api';
 
-export default function ChatArea({ session, documents, showToast }) {
+export default function ChatArea({ session, documents, showToast, onOpenSidebar }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const messagesEndRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     if (session) {
@@ -95,10 +97,56 @@ export default function ChatArea({ session, documents, showToast }) {
     }
   };
 
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast("Voice input is not supported in this browser.", "error");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => setIsListening(true);
+
+    recognition.onresult = (event) => {
+      let currentTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        currentTranscript += event.results[i][0].transcript;
+      }
+      setInput(currentTranscript);
+    };
+
+    recognition.onerror = (event) => {
+      setIsListening(false);
+      if (event.error !== 'no-speech') {
+        showToast("Microphone error: " + event.error, "error");
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+  };
+
   if (!session) {
     return (
       <div className="chat-area">
         <div className="chat-header">
+          <button className="mobile-menu-btn" onClick={onOpenSidebar} aria-label="Open sidebar">
+            <Menu size={22} />
+          </button>
           <div className="chat-header-info">
             <div className="chat-doc-icon"><Zap size={20} /></div>
             <div>
@@ -127,11 +175,14 @@ export default function ChatArea({ session, documents, showToast }) {
   return (
     <div className="chat-area">
       <div className="chat-header">
+        <button className="mobile-menu-btn" onClick={onOpenSidebar} aria-label="Open sidebar">
+          <Menu size={22} />
+        </button>
         <div className="chat-header-info">
           <div className="chat-doc-icon"><FileText size={20} /></div>
           <div>
             <div className="chat-doc-name">{session.filename}</div>
-            <div className="chat-session-label">Session: {session.session_id}</div>
+            <div className="chat-session-label">Active conversation</div>
           </div>
         </div>
       </div>
@@ -187,6 +238,14 @@ export default function ChatArea({ session, documents, showToast }) {
             onKeyDown={handleKeyDown}
             disabled={isTyping}
           />
+          <button
+            className={`mic-btn ${isListening ? 'listening' : ''}`}
+            onClick={toggleListening}
+            disabled={isTyping}
+            title="Use voice input"
+          >
+            <Mic size={18} />
+          </button>
           <button
             className="send-btn"
             onClick={handleSend}
