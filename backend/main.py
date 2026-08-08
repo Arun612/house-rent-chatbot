@@ -254,8 +254,7 @@ async def chat(req: ChatRequest):
 
 
 # ── Frontend (serve static files) ─────────────────────────────────────────────
+# Removed: Frontend is deployed separately on Vercel.
 @app.get("/", include_in_schema=False)
-def serve_frontend():
-    return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
-
-app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+def root():
+    return {"message": "House Rent Chatbot API is running."}
